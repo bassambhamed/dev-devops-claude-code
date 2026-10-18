@@ -1,0 +1,61 @@
+# Valeurs PAR DÉFAUT du chart, surchargées par values-<env>.yaml.
+# Tout ce qui VARIE entre environnements est ici : un seul jeu de templates.
+
+image:
+  tag: dev
+  pullPolicy: IfNotPresent          # images importées dans k3d
+
+# /health et /alive ne sont mappés qu'en Development (MapDefaultEndpoints) : on reste en
+# Development pour que les probes fonctionnent dans ce contexte de formation.
+env: Development
+
+# Ressources par défaut, surchargeables service par service.
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits:   { cpu: 500m, memory: 256Mi }
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
+ingress:
+  enabled: true
+  host: ecommerce.localhost
+  service: web                      # seul le frontend est exposé
+
+# Base du catalogue. Le mot de passe n'est JAMAIS dans les values : le chart lit un Secret
+# existant, créé à la main (kubectl create secret generic catalog-db --from-literal=password=…).
+database:
+  existingSecret: catalog-db
+  secretKey: password
+  name: catalogdb
+  user: catalog_app
+  postgres:
+    enabled: true                   # false : base externe, fournie par la plateforme
+    image: postgres:17-alpine
+    storage: 1Gi
+
+# Export OpenTelemetry (lab 10). Vide = pas d'export.
+otel:
+  endpoint: ""
+
+# Les services : le template boucle dessus (Deployment + Service, et HPA si activé).
+services:
+  catalog:
+    image: ecommerce-catalog
+    replicas: 1
+    database: true                  # reçoit ConnectionStrings__catalogdb
+  ordering:
+    image: ecommerce-ordering
+    replicas: 1
+    discovery: [catalog]
+  gateway:
+    image: ecommerce-gateway
+    replicas: 1
+    discovery: [catalog, ordering]
+  web:
+    image: ecommerce-web
+    replicas: 1
+    discovery: [gateway]

@@ -1,0 +1,71 @@
+# CI — intégration continue de l'ecommerce-app (.NET 10).
+# Déclenchée à chaque push et chaque Pull Request vers main. Ne déploie JAMAIS rien :
+# c'est le rôle de cd.yml, derrière un gate humain.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read            # moindre privilège : la CI lit le code, elle n'écrit nulle part
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true  # un nouveau push annule le run précédent de la même branche
+
+jobs:
+  build-test:
+    name: Build & tests (.NET 10)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer le SDK .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restaurer
+        run: dotnet restore ECommerce.slnx
+
+      - name: Compiler (Release, avertissements visibles)
+        run: dotnet build ECommerce.slnx --configuration Release --no-restore
+
+      # Les tests du catalogue démarrent un vrai PostgreSQL avec Testcontainers :
+      # Docker est disponible sur les runners ubuntu-latest, rien à configurer.
+      - name: Tests
+        run: dotnet test ECommerce.slnx --configuration Release --no-build --logger "trx;LogFileName=results.trx"
+
+      - name: Publier les résultats de tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/TestResults/*.trx"
+
+  migrations:
+    name: Script SQL des migrations
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # Le script idempotent est l'artefact qu'un DBA relit et que le pipeline de déploiement
+      # appliquera. La fabrique design-time n'a besoin d'aucune connexion ni d'aucun secret.
+      - name: Générer le script idempotent
+        run: |
+          dotnet tool install --global dotnet-ef
+          dotnet ef migrations script --idempotent \
+            --project src/ECommerce.Catalog.Api -o catalog-migrations.sql
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: catalog-migrations
+          path: catalog-migrations.sql

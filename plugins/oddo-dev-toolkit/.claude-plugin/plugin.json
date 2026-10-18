@@ -1,0 +1,17 @@
+{
+  "name": "oddo-dev-toolkit",
+  "displayName": "ODDO BHF — Dev & DevOps toolkit",
+  "version": "1.0.0",
+  "description": "Boîte à outils Claude Code des équipes Dev et DevOps : commandes, skills (tests, migrations EF Core, UI, conteneurs, CI, post-mortem), sous-agents de revue en lecture seule et garde-fous déterministes (anti-secret, blocage destructif, migrations immuables, audit DORA).",
+  "author": { "name": "Formation Claude Code Dev & DevOps" },
+  "keywords": ["dotnet", "aspire", "ef-core", "blazor", "devops", "kubernetes", "securite", "dora"],
+  "license": "MIT",
+  "userConfig": {
+    "audit_dir": {
+      "type": "directory",
+      "title": "Dossier du journal d'audit",
+      "description": "Où écrire le journal JSON Lines des actions de l'agent. Toujours HORS d'un dépôt Git.",
+      "default": "~/.claude/audit"
+    }
+  }
+}

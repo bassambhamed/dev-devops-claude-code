@@ -1,0 +1,22 @@
+{
+  "name": "oddo-dev-marketplace",
+  "owner": { "name": "Formation Claude Code Dev & DevOps — ODDO BHF" },
+  "metadata": {
+    "description": "Marketplace interne de la formation : le toolkit d'équipe et le poste de travail standard des développeurs et ingénieurs DevOps."
+  },
+  "allowCrossMarketplaceDependenciesOn": ["claude-plugins-official"],
+  "plugins": [
+    {
+      "name": "oddo-dev-toolkit",
+      "source": "./plugins/oddo-dev-toolkit",
+      "description": "Commandes, skills, sous-agents de revue et garde-fous déterministes de l'équipe (anti-secret, blocage destructif, migrations immuables, audit DORA).",
+      "category": "development"
+    },
+    {
+      "name": "oddo-dev-standard",
+      "source": "./plugins/oddo-dev-standard",
+      "description": "Le poste de travail standard en une commande : installe le toolkit d'équipe et une sélection relue de plugins officiels (LSP C#, doc à jour, garde-fous sécurité).",
+      "category": "development"
+    }
+  ]
+}

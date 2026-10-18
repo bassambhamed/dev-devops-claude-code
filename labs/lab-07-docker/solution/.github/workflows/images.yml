@@ -1,0 +1,44 @@
+# Images — construit et scanne l'image de chaque service. BLOQUANT sur une vulnérabilité
+# CRITICAL corrigeable : en CI, une procédure d'équipe existe pour lever un blocage.
+name: Images
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['src/**', '.dockerignore', '.github/workflows/images.yml']
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-scan:
+    name: Image ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # le rapport de TOUS les services, pas seulement du premier qui casse
+      matrix:
+        service: [Catalog.Api, Ordering.Api, Gateway, Web]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Contexte de build = racine du dépôt : les COPY des Dockerfiles commencent par src/.
+      - name: Construire
+        run: docker build -t scan-target:${{ github.sha }} -f src/ECommerce.${{ matrix.service }}/Dockerfile .
+
+      - name: Vérifier l'exécution non-root
+        run: |
+          user="$(docker inspect --format '{{.Config.User}}' scan-target:${{ github.sha }})"
+          echo "Utilisateur de l'image : '$user'"
+          if [ -z "$user" ] || [ "$user" = "0" ] || [ "$user" = "root" ]; then
+            echo "::error::L'image s'exécute en root."; exit 1
+          fi
+
+      - name: Scanner (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: scan-target:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true    # sans correctif disponible, un échec n'appelle aucune action
+          exit-code: "1"

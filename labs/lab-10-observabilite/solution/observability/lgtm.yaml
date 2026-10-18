@@ -1,0 +1,53 @@
+# Pile d'observabilité de LAB : grafana/otel-lgtm = collecteur OpenTelemetry (OTLP) + Prometheus
+# (métriques) + Tempo (traces) + Loki (logs) + Grafana, dans un seul conteneur.
+# Image destinée au développement et à la démonstration, pas à la production.
+#
+#   kubectl apply -f observability/lgtm.yaml
+#   kubectl -n observability port-forward service/lgtm 3000:3000   # Grafana (admin/admin à changer)
+#
+# Les services de l'application y envoient leur télémétrie via OTEL_EXPORTER_OTLP_ENDPOINT,
+# positionné par le chart Helm : --set otel.endpoint=http://lgtm.observability:4317
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lgtm
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: lgtm }
+  template:
+    metadata:
+      labels: { app: lgtm }
+    spec:
+      containers:
+        - name: lgtm
+          image: grafana/otel-lgtm:0.34.0     # épinglée
+          ports:
+            - { name: grafana,   containerPort: 3000 }
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1536Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lgtm
+  namespace: observability
+spec:
+  selector: { app: lgtm }
+  ports:
+    - { name: grafana,   port: 3000, targetPort: 3000 }
+    - { name: otlp-grpc, port: 4317, targetPort: 4317 }
+    - { name: otlp-http, port: 4318, targetPort: 4318 }

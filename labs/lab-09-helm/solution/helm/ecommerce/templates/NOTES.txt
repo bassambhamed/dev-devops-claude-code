@@ -1,0 +1,8 @@
+ecommerce {{ .Chart.AppVersion }} déployé dans le namespace {{ .Release.Namespace }}.
+
+{{- if .Values.ingress.enabled }}
+Frontend : http://{{ .Values.ingress.host }}:8081   (port de l'ingress k3d, lab 08)
+{{- end }}
+
+Le Secret {{ .Values.database.existingSecret }} doit exister AVANT l'installation :
+  kubectl -n {{ .Release.Namespace }} get secret {{ .Values.database.existingSecret }}

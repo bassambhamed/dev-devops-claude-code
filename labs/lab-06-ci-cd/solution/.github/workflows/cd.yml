@@ -1,0 +1,51 @@
+# CD — déploiement continu, en deux étages.
+#   1) staging    : automatique après une CI verte sur main ;
+#   2) production : SEULEMENT après approbation humaine (environnement protégé côté GitHub).
+# Les commandes de déploiement réelles (Helm, labs 08-09) remplacent les `echo` ci-dessous.
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]          # doit correspondre au `name:` de ci.yml
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false    # on n'interrompt jamais un déploiement en cours
+
+jobs:
+  deploy-staging:
+    name: Déployer en staging
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}   # exactement le commit validé par la CI
+      - name: Déployer
+        run: |
+          echo "Déploiement staging du commit ${{ github.event.workflow_run.head_sha }}"
+          # helm upgrade --install ecommerce helm/ecommerce -f helm/ecommerce/values-preprod.yaml --atomic
+          # Identifiants : ${{ secrets.KUBECONFIG_STAGING }} — jamais en clair
+
+  deploy-production:
+    name: Déployer en production (gate manuel)
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production    # protégé : « Required reviewers » côté GitHub — c'est LUI le contrôle
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Déployer
+        run: |
+          echo "Déploiement PRODUCTION après approbation humaine"
+          # helm upgrade --install ecommerce helm/ecommerce -f values-prod.yaml --atomic
+
+# Activer le gate (une fois) : Settings → Environments → production → Required reviewers.
+# Ou en ligne de commande : voir l'étape 4 du lab 06.

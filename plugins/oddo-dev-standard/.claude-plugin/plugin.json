@@ -1,0 +1,15 @@
+{
+  "name": "oddo-dev-standard",
+  "displayName": "ODDO BHF — poste Dev standard",
+  "version": "1.0.0",
+  "description": "Plugin « bundle » : il ne contient aucun composant, seulement des dépendances. L'installer installe le toolkit d'équipe et les plugins officiels validés par l'équipe sécurité.",
+  "author": { "name": "Formation Claude Code Dev & DevOps" },
+  "keywords": ["bundle", "standard", "dotnet"],
+  "license": "MIT",
+  "dependencies": [
+    "oddo-dev-toolkit",
+    { "name": "csharp-lsp", "marketplace": "claude-plugins-official" },
+    { "name": "context7", "marketplace": "claude-plugins-official" },
+    { "name": "security-guidance", "marketplace": "claude-plugins-official" }
+  ]
+}

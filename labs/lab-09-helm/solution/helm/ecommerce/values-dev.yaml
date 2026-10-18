@@ -1,0 +1,6 @@
+# Surcharge DEV : minimal et jetable.
+# helm upgrade --install ecommerce helm/ecommerce -n ecommerce -f helm/ecommerce/values-dev.yaml
+autoscaling:
+  enabled: false
+ingress:
+  host: ecommerce.localhost

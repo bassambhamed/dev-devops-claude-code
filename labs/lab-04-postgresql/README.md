@@ -1,0 +1,297 @@
+# Lab 04 — Créer la base PostgreSQL du catalogue
+
+> **Durée :** 90 min · **Modules requis :** [04](../../modules/04-hooks/) → [08](../../modules/08-mcp/)
+> · **Outils :** `dotnet`, `dotnet-ef`, Docker, `npx` · **Corrigé :** [`solution/`](solution/) (vérifié)
+
+---
+
+## 1. Objectif
+
+Faire passer le service **Catalog** d'une base EF Core *in-memory* — vidée à chaque redémarrage —
+à une **vraie base PostgreSQL** : schéma conçu (catégories, SKU unique, contraintes), migration
+versionnée et relue, base lancée par Aspire, tests contre le vrai moteur, et un accès **en lecture
+seule** pour l'agent.
+
+C'est le premier lab qui mobilise **toutes** les briques du parcours sur un seul cas d'usage.
+
+## 2. Pré-requis
+
+```bash
+docker info >/dev/null && echo "Docker OK"
+dotnet ef --version          # sinon : dotnet tool install --global dotnet-ef
+npx --version
+```
+
+- [Lab 03](../lab-03-securite-secrets/) terminé : le poste standard `oddo-dev-standard` est installé
+  (skill `ef-migration`, hook `guard-migrations`, sous-agent `db-reviewer`, `context7`).
+- Le port **5433** libre sur votre poste (sinon, changez-le dans `AppHost.cs` et `CATALOG_DB_PORT`).
+
+## 3. Briques mobilisées — et pourquoi chacune
+
+| Brique | Rôle | Pourquoi celle-ci |
+|---|---|---|
+| **MCP** `context7` (plugin) | La doc d'Aspire 13 et d'EF Core 10, **à jour** | L'API d'intégration PostgreSQL a changé plusieurs fois : la mémoire du modèle ne suffit pas |
+| **Mode Plan** | Valider le schéma avant d'écrire | Un schéma se discute avant de se coder |
+| **Skill** `ef-migration` | La procédure : modéliser, générer, relire le SQL, appliquer, tester | Huit étapes avec du jugement : un savoir-faire |
+| **Hook** `guard-migrations` | Une migration committée est immuable | Une règle sans exception : un contrôle |
+| **Sous-agent** `db-reviewer` | Relire la migration comme un DBA, sans pouvoir écrire | Un regard indépendant, au contexte séparé |
+| **MCP** DBHub | Interroger la base réelle, en lecture seule | L'agent doit voir le schéma **réellement** migré, pas seulement le C# |
+| **Skill** `gen-tests` | Passer les tests à Testcontainers | Le provider in-memory ignore contraintes et index |
+
+---
+
+## 4. Déroulé pas-à-pas
+
+### Étape 1 — Se documenter sur la bonne version (5 min)
+
+```bash
+cd ~/lab-ecommerce && git switch -c feat/catalog-postgres && claude
+```
+```text
+> Avec context7 : comment déclarer PostgreSQL dans un AppHost Aspire 13 (port fixe, volume de
+  données) et brancher un DbContext EF Core dans le service avec AddNpgsqlDbContext ? Qu'est-ce
+  que ça ajoute en health checks et en télémétrie ?
+```
+
+Retenez la réponse : `AddNpgsqlDbContext` ajoute un **health check de la base** (il rendra la
+readiness Kubernetes du [Lab 08](../lab-08-kubernetes/) dépendante de PostgreSQL) et les traces
+EF Core/Npgsql (utiles au [Lab 10](../lab-10-observabilite/)).
+
+### Étape 2 — Concevoir le schéma, en mode Plan (15 min)
+
+```text
+> /plan Fais passer Catalog d'EF Core in-memory à PostgreSQL via Aspire.
+  Schéma : une table Categories (nom unique) ; Products reçoit un Sku unique (40 car.) et une
+  CategoryId (FK, index, ON DELETE RESTRICT) ; contraintes CHECK prix >= 0 et stock >= 0.
+  Seed synthétique : 3 catégories, les 4 produits existants avec un SKU.
+  AppHost : AddPostgres sur le port 5433 avec un volume. API : GET /api/categories, filtres
+  ?categoryId= et ?search= sur GET /api/products, POST qui exige Sku et CategoryId
+  (400 si la catégorie n'existe pas, 409 si le SKU existe déjà).
+```
+
+Le skill `ef-migration` doit se déclencher. Discutez le plan avant de valider : *« que se passe-t-il
+si on supprime une catégorie qui a des produits ? »*
+
+> **Les pièges que vous allez croiser** (tous rencontrés en écrivant le corrigé) :
+> - **Versions** : `Aspire.Hosting.PostgreSQL` et `Aspire.Npgsql.EntityFrameworkCore.PostgreSQL`
+>   en **13.4.3**, comme le SDK de l'AppHost ; `Microsoft.EntityFrameworkCore.Design` en **10.0.8**
+>   pour s'aligner sur EF Core tiré par Npgsql — sinon l'avertissement `MSB3277` apparaît dans les tests.
+> - **`dotnet ef` hors Aspire** : sans chaîne de connexion, `migrations add` échoue. La solution
+>   est une **fabrique design-time** — et elle n'a besoin d'**aucun mot de passe**, car
+>   `migrations add` n'ouvre jamais de connexion. (Le hook `scan-secrets-on-write` refuserait
+>   d'ailleurs un `Password=` en dur.)
+> - **`Migrate()` au démarrage** : acceptable **en Development seulement**. En environnement
+>   partagé, une migration est une étape revue et explicite.
+
+### Étape 3 — Générer, puis relire le SQL (10 min)
+
+```text
+> Génère la migration InitialCreate, puis montre-moi le SQL qu'elle produit et déroule ta
+  checklist de revue.
+```
+
+Ce que fait le skill, que vous pouvez rejouer :
+
+```bash
+dotnet ef migrations add InitialCreate --project src/ECommerce.Catalog.Api
+dotnet ef migrations script --project src/ECommerce.Catalog.Api -o migration.sql
+less migration.sql
+```
+
+Lisez le SQL, pas le C# : `GENERATED BY DEFAULT AS IDENTITY`, les `CHECK`, les index uniques, et
+— après les `INSERT` du seed — des `SELECT setval(...)`. Npgsql **réaligne lui-même** les
+séquences d'identité après un seed à identifiants explicites ; si vous insériez ces lignes à la
+main avec `psql`, ce serait à vous de le faire : sans eux, la séquence repartirait à 1 et le
+premier `POST` entrerait en collision avec le seed.
+
+### Étape 4 — Le regard du DBA (5 min)
+
+```text
+> Fais relire cette migration par db-reviewer.
+```
+
+Le sous-agent rend un tableau et un verdict **SÛRE / À REVOIR / BLOQUANTE**, sans avoir pu modifier
+quoi que ce soit. Vérifiez avec `/context` que sa lecture n'a pas encombré votre session.
+
+### Étape 5 — Lancer et vérifier (10 min)
+
+Dans un **autre terminal** :
+
+```bash
+cd ~/lab-ecommerce && dotnet run --project src/ECommerce.AppHost
+```
+
+Aspire démarre le conteneur PostgreSQL, puis Catalog applique la migration. Vérifiez via la
+gateway (port `5067`, profil `http` des services) :
+
+```bash
+curl -s http://localhost:5067/catalog/api/categories
+curl -s "http://localhost:5067/catalog/api/products?categoryId=1" | jq '[.[].sku]'
+curl -s "http://localhost:5067/catalog/api/products?search=monitor" | jq '[.[].name]'
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5067/catalog/health
+```
+
+Attendu (vérifié) : 3 catégories ; `KB-MX-001` et `MS-WL-002` ; `4K Monitor` ; `200`.
+
+> Aucune modification du Gateway n'est nécessaire : sa règle YARP `/catalog/{**catch-all}` transmet
+> tout ce qui commence par `/catalog`, y compris la nouvelle route `/api/categories`.
+
+### Étape 6 — Les tests du Lab 02 cassent : tant mieux (15 min)
+
+```bash
+dotnet test ECommerce.slnx
+```
+
+Les tests du catalogue échouent : le contrat a changé (SKU et catégorie obligatoires), et le
+provider in-memory n'existe plus. **C'est leur rôle.**
+
+```text
+> Les tests du catalogue utilisaient une base in-memory. Passe-les sur un vrai PostgreSQL avec
+  Testcontainers (une fabrique WebApplicationFactory qui démarre postgres:17-alpine et injecte
+  ConnectionStrings:catalogdb), adapte la création de produit au nouveau contrat SANS changer
+  le sens des autres tests, et ajoute les cas : catégories, filtre, SKU dupliqué (409),
+  catégorie inexistante (400).
+```
+
+Attendu : **9 tests verts**, contre la même version de PostgreSQL que l'AppHost. Le hook `Stop`
+du Lab 02 refuse toute conclusion tant que ce n'est pas le cas.
+
+### Étape 7 — Un accès en lecture seule pour l'agent (15 min)
+
+**7.1 — Le rôle SQL, créé par vous, hors session.** C'est un acte d'administration : l'humain le fait.
+
+```bash
+read -s CATALOG_RO_PASSWORD && export CATALOG_RO_PASSWORD
+PG=$(docker ps --filter "name=postgres" --format '{{.Names}}' | head -1)
+docker exec -i "$PG" psql -U postgres -d catalogdb -v ro_password="$CATALOG_RO_PASSWORD" \
+  -f - < "$FORMATION/labs/lab-04-postgresql/solution/sql/create-readonly-role.sql"
+```
+
+Lisez [le script](solution/sql/create-readonly-role.sql) : `SELECT` seulement, transactions en
+lecture seule par défaut, `statement_timeout` de 5 s, et les **futures** tables lisibles sans
+action de plus.
+
+**7.2 — Le serveur MCP.** Copiez la configuration de DBHub et le `.mcp.json` d'équipe :
+
+```bash
+cp "$FORMATION/labs/lab-04-postgresql/solution/"{dbhub.toml,.mcp.json} .
+```
+
+Aucun secret dans ces deux fichiers : `${CATALOG_RO_PASSWORD}` est lu dans l'environnement. Relancez
+`claude` **dans le terminal où la variable est exportée** et approuvez le serveur `catalogdb`.
+
+```text
+> /mcp
+> Combien de produits par catégorie ? Et l'index unique sur Sku existe-t-il vraiment dans la base ?
+> Supprime les produits de la catégorie Displays.
+```
+
+Les deux premières questions passent par `mcp__catalogdb__execute_sql` et `search_objects`. La
+troisième est **refusée**, par trois barrières indépendantes (chacune testée en écrivant le corrigé) :
+
+| Barrière | Message |
+|---|---|
+| L'outil DBHub (`readonly = true`) | `READONLY_VIOLATION` |
+| La transaction du rôle (`default_transaction_read_only`) | `cannot execute DELETE in a read-only transaction` |
+| Les privilèges du rôle (`SELECT` seulement) | `permission denied for table Products` |
+
+**C'est la règle R6 appliquée** : la vraie garantie est le **rôle SQL**, pas l'option de l'outil.
+
+### Étape 8 — Le DBA voit la base (5 min)
+
+Le `db-reviewer` du plugin ne voit que les fichiers (un agent de plugin ne peut pas déclarer de
+serveur MCP). Copiez la [version projet](solution/.claude/agents/db-reviewer.md), qui référence
+`catalogdb` dans `mcpServers` :
+
+```bash
+cp "$FORMATION/labs/lab-04-postgresql/solution/.claude/agents/db-reviewer.md" .claude/agents/
+```
+```text
+> Fais relire par db-reviewer (version projet) l'ajout d'une contrainte NOT NULL sur
+  Products.Description, en vérifiant dans la base combien de lignes seraient concernées.
+```
+
+Il interroge la base (`SELECT count(*) … WHERE "Description" IS NULL`) avant de conclure.
+
+### Étape 9 — Le garde-fou des migrations (5 min)
+
+Committez d'abord la migration (`/ship`, ou un commit de votre part). Puis :
+
+```text
+> Dans la migration InitialCreate, change la longueur du SKU de 40 à 64.
+```
+
+**Bloqué** par `guard-migrations` : la migration est committée, donc potentiellement appliquée
+ailleurs. L'agent reçoit la procédure et propose une **nouvelle** migration (`IncreaseSkuLength`).
+Laissez-le faire, relisez son SQL, puis `/rewind` si vous ne la gardez pas.
+
+### Étape 10 — Livrer (5 min)
+
+```text
+> /ship passage du catalogue sur PostgreSQL
+```
+
+La PR doit signaler dans **Risques** : nouvelle migration, contrat d'API modifié (SKU et catégorie
+obligatoires en création).
+
+---
+
+## 5. Livrable
+
+```
+src/ECommerce.AppHost/AppHost.cs                    # AddPostgres(port 5433) + volume + AddDatabase
+src/ECommerce.Catalog.Api/
+├── Models/{Product,Category}.cs
+├── Data/CatalogDbContext.cs · CatalogDbContextFactory.cs   # fabrique design-time SANS mot de passe
+├── Endpoints/CatalogEndpoints.cs                   # catégories, filtres, 400/409
+├── Migrations/…_InitialCreate.cs
+└── Program.cs                                      # AddNpgsqlDbContext ; Migrate en Development
+tests/ECommerce.Catalog.Tests/                      # Testcontainers, 9 tests
+sql/create-readonly-role.sql                        # rôle catalog_ro
+dbhub.toml · .mcp.json                              # MCP lecture seule, aucun secret
+.claude/agents/db-reviewer.md                       # version projet, avec mcpServers
+```
+
+## 6. Garde-fous
+
+| Règle | Mécanisme | Garantie |
+|---|---|---|
+| Aucun secret dans le code ou la configuration (R1) | Paramètre Aspire, `${VAR}`, fabrique sans mot de passe, hook d'écriture | Contrôle |
+| Une migration committée est immuable (R4) | Hook `guard-migrations` | Contrôle |
+| Le SQL est relu avant application (R4) | Skill `ef-migration` + `db-reviewer` | Consigne + regard indépendant |
+| L'agent ne peut pas écrire en base (R6) | Rôle `catalog_ro` + transaction read-only + `readonly` DBHub | **Trois** contrôles |
+| Données de seed synthétiques (R1) | Doctrine du skill | Consigne |
+| Pas de `database drop` par l'agent (R2) | Hook `guard-destructive` + `deny` | Contrôle |
+
+## 7. Pour aller plus loin
+
+- Faites passer **Ordering** sur PostgreSQL (deuxième base, même serveur) — en réutilisant le skill.
+- Faites lire un plan d'exécution : `EXPLAIN ANALYZE` d'une recherche par nom ; proposez un index
+  `pg_trgm` — et justifiez-le, ou renoncez-y.
+- Préparez le [Lab 08](../lab-08-kubernetes/) : comment appliquer les migrations en Kubernetes sans
+  `Migrate()` au démarrage ? (Indice : `dotnet ef migrations bundle` et un `Job`.)
+- Réservez le serveur `catalogdb` au seul `db-reviewer` (définition **en ligne** dans `mcpServers`,
+  et retrait du `.mcp.json`).
+
+## 8. La limite révélée
+
+Le backend sait filtrer par catégorie et chercher par nom. L'interface, elle, ne le sait pas : la
+page catalogue n'a ni filtre, ni état de chargement, ni gestion d'erreur, et personne n'a vérifié
+qu'elle s'utilise au clavier ou sur un téléphone.
+
+> **→ [Lab 05 — Améliorer le frontend](../lab-05-frontend/)**
+
+## Corrigé
+
+```bash
+S="$FORMATION/labs/lab-04-postgresql/solution"
+cp "$S/src/ECommerce.AppHost/"* ~/lab-ecommerce/src/ECommerce.AppHost/
+cp -r "$S/src/ECommerce.Catalog.Api/"* ~/lab-ecommerce/src/ECommerce.Catalog.Api/
+cp "$S/tests/ECommerce.Catalog.Tests/"* ~/lab-ecommerce/tests/ECommerce.Catalog.Tests/
+cp -r "$S/sql" "$S/dbhub.toml" "$S/.mcp.json" ~/lab-ecommerce/
+cp "$S/.claude/agents/db-reviewer.md" ~/lab-ecommerce/.claude/agents/
+```
+
+Vérifications faites sur ce corrigé : build sans avertissement, 9 tests Testcontainers verts,
+application lancée par Aspire et interrogée via la gateway, rôle `catalog_ro` et DBHub testés
+(lecture acceptée, écriture refusée par les trois barrières).

@@ -1,0 +1,68 @@
+{{- /* Un Deployment par service déclaré dans .Values.services */ -}}
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app: {{ $name }}
+    {{- include "ecommerce.labels" $ | nindent 4 }}
+spec:
+  {{- if not $.Values.autoscaling.enabled }}
+  replicas: {{ $svc.replicas | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: {{ $name }}
+          image: "{{ $svc.image }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: {{ $.Values.env | quote }}
+            - name: ASPNETCORE_HTTP_PORTS
+              value: "8080"
+            {{- range $svc.discovery }}
+            - name: services__{{ . }}__http__0     # service discovery Aspire hors AppHost
+              value: "http://{{ . }}:8080"
+            {{- end }}
+            {{- if $svc.database }}
+            - name: CATALOG_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.database.existingSecret }}
+                  key: {{ $.Values.database.secretKey }}
+            - name: ConnectionStrings__catalogdb
+              value: "Host=postgres;Port=5432;Database={{ $.Values.database.name }};Username={{ $.Values.database.user }};Password=$(CATALOG_DB_PASSWORD)"
+            {{- end }}
+            {{- if $.Values.otel.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ $.Values.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ $name | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /alive, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            {{- toYaml (default $.Values.resources $svc.resources) | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+{{- end }}

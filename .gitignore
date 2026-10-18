@@ -1,0 +1,35 @@
+# Artefacts .NET
+bin/
+obj/
+*.user
+TestResults/
+
+# Secrets & configuration locale
+.env
+*.tfvars
+!*.tfvars.example
+.claude/settings.local.json
+*.pem
+*.key
+
+# Divers
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Journaux d'audit produits par les hooks
+.claude/audit/
+
+# Système
+.DS_Store
+Thumbs.db
+
+# LaTeX (les sources vivent hors de ce dépôt ; garde-fou au cas où)
+*.aux
+*.log
+*.nav
+*.out
+*.snm
+*.toc
+*.vrb
+*.synctex.gz

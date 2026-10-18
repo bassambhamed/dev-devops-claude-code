@@ -1,0 +1,14 @@
+# Fichiers à NE PAS envoyer dans le contexte de build Docker (contexte = racine du repo).
+# ⚠️ Crucial : bin/ et obj/ contiennent un restore local (chemins macOS/.nuget de l'hôte).
+# S'ils sont copiés dans l'image, ils écrasent le restore fait dans le conteneur et
+# `dotnet publish --no-restore` échoue (NETSDK1064 : package introuvable).
+**/bin/
+**/obj/
+
+# Bruit inutile dans le contexte (taille + invalidation de cache).
+**/.git/
+**/.vs/
+**/.vscode/
+**/.idea/
+**/*.user
+**/.DS_Store

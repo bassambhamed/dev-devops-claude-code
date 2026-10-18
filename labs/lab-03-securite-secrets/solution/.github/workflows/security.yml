@@ -1,0 +1,64 @@
+# Sécurité — contrôle BLOQUANT à chaque Pull Request, et chaque lundi sur tout le dépôt.
+#
+# Trois portes, dans l'ordre du risque :
+#   1) secrets dans l'historique            (gitleaks)                        -> bloquant
+#   2) dépendances NuGet vulnérables        (dotnet list package --vulnerable) -> bloquant sur High/Critical
+#   3) configuration et fichiers sensibles  (trivy fs : Dockerfiles, manifestes, secrets) -> bloquant sur CRITICAL
+#
+# Contrairement aux hooks du poste (qui informent ou bloquent localement), ce job bloque la
+# fusion : en CI, il existe une procédure d'équipe pour lever un blocage.
+name: Security
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                    # gitleaks analyse l'historique, pas seulement le dernier état
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  dependencies:
+    name: Dépendances NuGet vulnérables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Restaurer
+        run: dotnet restore ECommerce.slnx
+      - name: Lister les paquets vulnérables (y compris transitifs)
+        run: |
+          dotnet list ECommerce.slnx package --vulnerable --include-transitive | tee vulnerable.txt
+          # Échoue si une vulnérabilité High ou Critical est présente.
+          if grep -Eq '\b(High|Critical)\b' vulnerable.txt; then
+            echo "::error::Dépendance vulnérable High/Critical : voir le rapport ci-dessus."
+            exit 1
+          fi
+
+  filesystem:
+    name: Configuration et fichiers (trivy fs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@v0.36.0   # épinglée : un scanner qui change seul n'est pas un contrôle
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig,secret
+          severity: CRITICAL
+          exit-code: "1"

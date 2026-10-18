@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status)", "Bash(git diff:*)", "Bash(git log:*)",
+      "Bash(dotnet build:*)", "Bash(dotnet test:*)", "Bash(dotnet format:*)"
+    ],
+    "ask": ["Bash(git commit:*)", "Bash(git push:*)"],
+    "deny": ["Bash(git push --force:*)", "Read(./.env)", "Read(./**/*.pem)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-destructive.sh" },
+        { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/secret-scan.sh" }
+      ]}
+    ],
+    "PostToolUse": [
+      { "matcher": "Write|Edit|MultiEdit", "hooks": [
+        { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format-cs.sh", "timeout": 60 }
+      ]}
+    ],
+    "Stop": [
+      { "hooks": [
+        { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/tests-must-pass.sh", "timeout": 300 }
+      ]}
+    ]
+  }
+}

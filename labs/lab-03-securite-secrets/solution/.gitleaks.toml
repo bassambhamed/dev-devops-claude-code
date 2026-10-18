@@ -1,0 +1,30 @@
+# Configuration gitleaks — formation Claude Code Dev & DevOps.
+# Étend les règles par défaut avec les motifs propres à une application .NET.
+title = "ecommerce-app"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "dotnet-connectionstring-password"
+description = "Chaîne de connexion .NET / Npgsql contenant un mot de passe en clair"
+regex = '''(?i)(host|server|data source)=[^;"']+;.*(password|pwd)=[^;"'\s$]{4,}'''
+tags = ["dotnet", "database"]
+
+[[rules]]
+id = "aspire-dashboard-token"
+description = "Jeton du dashboard Aspire"
+regex = '''(?i)aspire[_-]?dashboard[_-]?token\s*[:=]\s*['"]?[A-Za-z0-9+/=]{20,}'''
+tags = ["aspire"]
+
+[allowlist]
+description = "Faux positifs connus : documentation et valeurs volontaires des exercices"
+paths = [
+  '''.*\.example$''',
+  '''(^|/)docs/.*\.md$''',
+  '''(^|/)labs/.*/README\.md$''',
+]
+regexes = [
+  '''Sup3rS3cret!''',          # valeur fictive volontaire des exercices
+  '''\$\{[A-Z_]+\}''',        # références à des variables d'environnement
+]

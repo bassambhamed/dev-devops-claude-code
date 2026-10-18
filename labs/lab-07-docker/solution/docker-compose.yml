@@ -1,0 +1,77 @@
+# Compose DEV — lance PostgreSQL et les 4 microservices ensemble, sans Aspire.
+#
+# - La découverte de services Aspire (https+http://<nom>) est recâblée à la main via les
+#   variables services__<nom>__http__0, avec les noms de service compose comme DNS.
+# - Le mot de passe PostgreSQL n'est PAS dans ce fichier : il vient de `.env` (ignoré par
+#   Git). Sans lui, compose refuse de démarrer — c'est voulu.
+#     echo "CATALOG_DB_PASSWORD=$(openssl rand -hex 24)" > .env
+# - Catalog applique ses migrations au démarrage (environnement Development, lab 04).
+
+services:
+  postgres:
+    image: postgres:17-alpine            # version épinglée : pas de `latest` sur une base
+    environment:
+      POSTGRES_DB: catalogdb
+      POSTGRES_USER: catalog_app
+      POSTGRES_PASSWORD: ${CATALOG_DB_PASSWORD:?définir CATALOG_DB_PASSWORD dans .env (non committé)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:                         # catalog n'attend pas « le conteneur », il attend « la base prête »
+      test: ["CMD-SHELL", "pg_isready -U catalog_app -d catalogdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Pas de port publié : la base reste interne au réseau compose.
+
+  catalog:
+    build:
+      context: .                         # contexte = racine du repo (les COPY commencent par src/)
+      dockerfile: src/ECommerce.Catalog.Api/Dockerfile
+    image: ecommerce-catalog:dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__catalogdb: Host=postgres;Port=5432;Database=catalogdb;Username=catalog_app;Password=${CATALOG_DB_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ordering:
+    build:
+      context: .
+      dockerfile: src/ECommerce.Ordering.Api/Dockerfile
+    image: ecommerce-ordering:dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      services__catalog__http__0: http://catalog:8080      # ordering -> catalog (appel direct)
+    depends_on:
+      - catalog
+
+  gateway:
+    build:
+      context: .
+      dockerfile: src/ECommerce.Gateway/Dockerfile
+    image: ecommerce-gateway:dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      services__catalog__http__0: http://catalog:8080
+      services__ordering__http__0: http://ordering:8080
+    depends_on:
+      - catalog
+      - ordering
+    # Pas de port publié : le gateway reste INTERNE (seul le frontend web est public).
+
+  web:
+    build:
+      context: .
+      dockerfile: src/ECommerce.Web/Dockerfile
+    image: ecommerce-web:dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      services__gateway__http__0: http://gateway:8080      # web -> gateway
+    depends_on:
+      - gateway
+    ports:
+      - "8080:8080"                      # frontend Blazor : http://localhost:8080 (seul service public)
+
+volumes:
+  pgdata:
