@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "name": "Référentiel Code Health — application ECommerce",
+  "description": "Règles locales de santé du code et de détection des bloqueurs, versionnées dans le projet. Aucune clé d'API : métriques open source (lizard) et règles du projet.",
+  "languages": {
+    ".cs": "csharp",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript"
+  },
+  "include": ["src/**"],
+  "exclude": [
+    "**/bin/**", "**/obj/**", "**/node_modules/**", "**/.next/**", "**/dist/**", "**/coverage/**",
+    "**/Migrations/**", "**/*.Designer.cs", "**/*.g.cs", "**/*.d.ts", "**/wwwroot/lib/**",
+    "**/next-env.d.ts", "**/*.config.js", "**/*.config.mjs"
+  ],
+  "bands": { "healthy": 9.0, "problematic": 4.0 },
+  "penalty": { "warning": 0.5, "critical": 1.0 },
+  "regression_tolerance": 0.0,
+  "smells": {
+    "complex_method": {
+      "label": "Complex Method", "scope": "function", "metric": "cyclomatic_complexity",
+      "warning": 10, "critical": 15, "weight": 1.0,
+      "advice": "Extraire des méthodes nommées par responsabilité ; remplacer les conditions par des retours anticipés."
+    },
+    "deep_nesting": {
+      "label": "Deep, Nested Complexity", "scope": "function", "metric": "max_nested_structures",
+      "warning": 4, "critical": 5, "weight": 1.0,
+      "advice": "Inverser les conditions (guard clauses) et extraire la boucle ou le bloc interne."
+    },
+    "complex_logic": {
+      "label": "Complex Logic (complexité cognitive)", "scope": "function", "metric": "cognitive_complexity",
+      "warning": 15, "critical": 25, "weight": 0.8,
+      "advice": "Nommer les prédicats, aplatir les branches, isoler les cas particuliers."
+    },
+    "large_method": {
+      "label": "Large Method", "scope": "function", "metric": "nloc",
+      "warning": 70, "critical": 120, "weight": 0.8,
+      "advice": "Découper par étape (validation, appel distant, mapping, persistance)."
+    },
+    "excess_arguments": {
+      "label": "Excess Function Arguments", "scope": "function", "metric": "parameter_count",
+      "warning": 5, "critical": 7, "weight": 0.5,
+      "advice": "Introduire un objet paramètre (record de requête)."
+    },
+    "large_file": {
+      "label": "Large File", "scope": "file", "metric": "file_nloc",
+      "warning": 600, "critical": 1000, "weight": 1.0,
+      "advice": "Séparer les responsabilités en plusieurs fichiers ou composants."
+    },
+    "code_duplication": {
+      "label": "Code Duplication", "scope": "file", "metric": "duplicated_blocks",
+      "min_lines": 6, "weight": 0.7, "max_penalty": 2.0,
+      "advice": "Factoriser dans une méthode, une extension ou un composant partagé."
+    }
+  },
+  "language_overrides": {
+    "tsx": { "large_method": { "warning": 90, "critical": 150 } }
+  },
+  "blocker_rules": [
+    {
+      "id": "B-01", "severity": "B0", "category": "DEPLOY", "owner": "codescene",
+      "title": "Sondes /health et /alive exposées uniquement en Development",
+      "glob": "src/**/*.cs", "multiline": true,
+      "pattern": "IsDevelopment\\(\\)\\)\\s*\\{[^}]*MapHealthChecks",
+      "advice": "Exposer les sondes en production (filtrage réseau ou port dédié) pour Kubernetes."
+    },
+    {
+      "id": "B-02", "severity": "B1", "category": "MIGRATION", "owner": "migration",
+      "title": "Base EF Core en mémoire (aucune persistance)",
+      "glob": "src/**/*.cs", "pattern": "UseInMemoryDatabase\\(",
+      "advice": "Remplacer par AddNpgsqlDbContext et des migrations EF Core."
+    },
+    {
+      "id": "B-02b", "severity": "B1", "category": "MIGRATION", "owner": "migration",
+      "title": "EnsureCreated() incompatible avec les migrations",
+      "glob": "src/**/*.cs", "pattern": "EnsureCreated(Async)?\\(\\)",
+      "advice": "Appliquer les migrations par un service de migration (MigrateAsync)."
+    },
+    {
+      "id": "B-03", "severity": "B1", "category": "MIGRATION", "owner": "migration",
+      "title": "HasData avec identifiants explicites (séquence d'identité PostgreSQL)",
+      "glob": "src/**/*.cs", "multiline": true,
+      "pattern": "HasData\\(\\s*new\\s+\\w+\\s*\\{\\s*Id\\s*=",
+      "advice": "Utiliser UseAsyncSeeding ou réserver la séquence d'identité."
+    },
+    {
+      "id": "B-04", "severity": "B1", "category": "QUALITY", "owner": "codescene",
+      "title": "Collection de la requête utilisée sans contrôle de nullité",
+      "glob": "src/**/*.cs", "pattern": "request\\.Items\\.Count",
+      "unless": "request\\.Items\\s+is\\s+(null|not\\s+\\{|\\{\\s*Count)|request\\.Items\\s*==\\s*null|request\\.Items\\?\\.",
+      "advice": "Valider la requête (Items non nul et non vide, quantités > 0) et renvoyer ValidationProblem."
+    },
+    {
+      "id": "B-06", "severity": "B2", "category": "QUALITY", "owner": "codescene",
+      "title": "Appel distant dans une boucle (N+1)",
+      "glob": "src/**/*.cs", "multiline": true,
+      "pattern": "foreach\\s*\\([^)]*\\)\\s*\\{[^}]{0,400}?await\\s+\\w+\\.Get\\w*Async",
+      "advice": "Regrouper les appels (endpoint de lecture par lot) ou paralléliser avec un plafond."
+    },
+    {
+      "id": "B-08", "severity": "B1", "category": "MIGRATION", "owner": "migration",
+      "title": "Contrat OpenAPI disponible uniquement en Development",
+      "glob": "src/**/*.cs", "multiline": true,
+      "pattern": "IsDevelopment\\(\\)\\)\\s*\\{\\s*app\\.MapOpenApi\\(\\)",
+      "advice": "Générer le document OpenAPI au build pour produire le client TypeScript."
+    },
+    {
+      "id": "B-09", "severity": "B2", "category": "DEPLOY", "owner": "codescene",
+      "title": "Redirection HTTPS applicative derrière un ingress",
+      "glob": "src/**/*.cs", "pattern": "UseHttpsRedirection\\(\\)",
+      "advice": "Laisser l'ingress terminer TLS ; désactiver la redirection en conteneur."
+    },
+    {
+      "id": "SEC-01", "severity": "B0", "category": "SECURITY", "owner": "codescene",
+      "title": "Mot de passe en clair dans une configuration",
+      "glob": "src/**/appsettings*.json", "pattern": "(?i)password\\s*=\\s*[^;\"$]+",
+      "advice": "Utiliser les secrets Aspire, les Secrets Kubernetes ou des variables d'environnement."
+    },
+    {
+      "id": "FE-01", "severity": "B0", "category": "SECURITY", "owner": "codescene",
+      "title": "Secret exposé au navigateur par une variable NEXT_PUBLIC_",
+      "glob": "src/ECommerce.Storefront/**", "pattern": "NEXT_PUBLIC_[A-Z0-9_]*(SECRET|TOKEN|KEY|PASSWORD)",
+      "advice": "Lire le secret côté serveur uniquement (Server Component, Server Action, route handler)."
+    },
+    {
+      "id": "FE-02", "severity": "B2", "category": "FRONTEND", "owner": "codescene",
+      "title": "Page ou layout entier rendu côté client",
+      "glob": "src/ECommerce.Storefront/**/app/**/{page,layout}.tsx", "pattern": "^\\s*['\"]use client['\"]",
+      "advice": "Garder la page en Server Component et isoler l'interactivité dans un composant feuille."
+    },
+    {
+      "id": "FE-03", "severity": "B1", "category": "DEPLOY", "owner": "codescene",
+      "title": "Sortie standalone absente de la configuration Next.js",
+      "glob": "src/ECommerce.Storefront/next.config.*", "type": "require",
+      "pattern": "output\\s*:\\s*['\"]standalone['\"]",
+      "advice": "Ajouter output: 'standalone' (image Docker et AddNextJsApp d'Aspire)."
+    }
+  ],
+  "hotspots": { "since": "6 months", "top": 10 }
+}

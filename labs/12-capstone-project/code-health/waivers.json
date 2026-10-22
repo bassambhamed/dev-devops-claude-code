@@ -1,0 +1,4 @@
+{
+  "description": "Dérogations validées par un humain (gate G1). Exemple : {\"rule\": \"deep_nesting\", \"file\": \"src/ECommerce.Web/**\", \"function\": \"handleReconnectStateChanged\", \"reason\": \"code Blazor généré, retiré après G3\", \"approved_by\": \"tech lead\", \"gate\": \"G1\"}",
+  "waivers": []
+}
